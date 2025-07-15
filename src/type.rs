@@ -19,6 +19,21 @@ pub trait IndexableNum:
     const TYPE_INDEX: u8;
     /// The number of bytes per element
     const BYTES_PER_ELEMENT: usize;
+    
+    /// Convert to f64 for distance calculations
+    fn to_f64(self) -> Option<f64> {
+        NumCast::from(self)
+    }
+    
+    /// Convert from f64 for distance calculations
+    fn from_f64(value: f64) -> Option<Self> {
+        NumCast::from(value)
+    }
+    
+    /// Get the square root of this value
+    fn sqrt(self) -> Self {
+        NumCast::from(self.to_f64().unwrap().sqrt()).unwrap()
+    }
 }
 
 impl IndexableNum for i8 {
