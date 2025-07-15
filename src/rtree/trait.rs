@@ -235,14 +235,12 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
                     // For leaf items, calculate distance to the center of the bounding box
                     let center_x = (boxes[pos] + boxes[pos + 2]) / (N::one() + N::one());
                     let center_y = (boxes[pos + 1] + boxes[pos + 3]) / (N::one() + N::one());
-                    let dist = distance_metric.distance(x, y, center_x, center_y);
+                    let leaf_dist = distance_metric.distance(x, y, center_x, center_y);
 
-                    if dist <= max_distance {
-                        queue.push(Reverse(NeighborNode {
-                            id: (index << 1) + 1,
-                            dist,
-                        }));
-                    }
+                    queue.push(Reverse(NeighborNode {
+                        id: (index << 1) + 1,
+                        dist: leaf_dist,
+                    }));
                 }
             }
 
