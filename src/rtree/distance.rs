@@ -10,11 +10,11 @@ use std::f64::consts::PI;
 pub trait DistanceMetric<N: IndexableNum> {
     /// Calculate the distance between two points (x1, y1) and (x2, y2).
     fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N;
-    
+
     /// Calculate the distance from a point to a bounding box.
     /// This is used for spatial index optimization.
     fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N;
-    
+
     /// Return the maximum distance value for this metric.
     fn max_distance(&self) -> N {
         N::max_value()
@@ -22,7 +22,7 @@ pub trait DistanceMetric<N: IndexableNum> {
 }
 
 /// Euclidean distance metric.
-/// 
+///
 /// This is the standard straight-line distance calculation suitable for
 /// planar coordinate systems. When working with longitude/latitude coordinates,
 /// the unit of distance will be degrees.
@@ -36,7 +36,7 @@ impl<N: IndexableNum> DistanceMetric<N> for EuclideanDistance {
         let dy = y1 - y2;
         (dx * dx + dy * dy).sqrt()
     }
-    
+
     #[inline]
     fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
         let dx = axis_dist(x, min_x, max_x);
@@ -46,7 +46,7 @@ impl<N: IndexableNum> DistanceMetric<N> for EuclideanDistance {
 }
 
 /// Haversine distance metric.
-/// 
+///
 /// This calculates the great-circle distance between two points on a sphere.
 /// It's more accurate for geographic distances than Euclidean distance.
 /// The input coordinates should be in longitude/latitude (degrees), and
@@ -79,15 +79,22 @@ impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
         let delta_lat = (lat2.to_f64().unwrap() - lat1.to_f64().unwrap()) * PI / 180.0;
         let delta_lon = (lon2.to_f64().unwrap() - lon1.to_f64().unwrap()) * PI / 180.0;
 
-        let a = (delta_lat / 2.0).sin().powi(2) +
-                lat1_rad.cos() * lat2_rad.cos() *
-                (delta_lon / 2.0).sin().powi(2);
+        let a = (delta_lat / 2.0).sin().powi(2)
+            + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-        
+
         N::from_f64(self.earth_radius * c).unwrap_or(N::max_value())
     }
-    
-    fn distance_to_bbox(&self, lon: N, lat: N, min_lon: N, min_lat: N, max_lon: N, max_lat: N) -> N {
+
+    fn distance_to_bbox(
+        &self,
+        lon: N,
+        lat: N,
+        min_lon: N,
+        min_lat: N,
+        max_lon: N,
+        max_lat: N,
+    ) -> N {
         // For bbox distance with Haversine, we approximate using the closest point on the bbox
         let closest_lon = if lon < min_lon {
             min_lon
@@ -96,7 +103,7 @@ impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
         } else {
             lon
         };
-        
+
         let closest_lat = if lat < min_lat {
             min_lat
         } else if lat > max_lat {
@@ -104,13 +111,13 @@ impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
         } else {
             lat
         };
-        
+
         self.distance(lon, lat, closest_lon, closest_lat)
     }
 }
 
 /// Spheroid distance metric.
-/// 
+///
 /// This calculates the shortest distance between two points on the surface
 /// of a spheroid (ellipsoid), providing a more accurate Earth model than
 /// a simple sphere. The input coordinates should be in longitude/latitude
@@ -126,7 +133,7 @@ pub struct SpheroidDistance {
 impl Default for SpheroidDistance {
     fn default() -> Self {
         Self {
-            semi_major_axis: 6378137.0,    // WGS84 equatorial radius
+            semi_major_axis: 6378137.0,      // WGS84 equatorial radius
             semi_minor_axis: 6356752.314245, // WGS84 polar radius
         }
     }
@@ -140,7 +147,7 @@ impl SpheroidDistance {
             semi_minor_axis,
         }
     }
-    
+
     /// Create a new Spheroid distance metric for GRS80 ellipsoid.
     pub fn grs80() -> Self {
         Self {
@@ -156,74 +163,102 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
         let lat1 = lat1.to_f64().unwrap() * PI / 180.0;
         let lat2 = lat2.to_f64().unwrap() * PI / 180.0;
         let delta_lon = (lon2.to_f64().unwrap() - lon1.to_f64().unwrap()) * PI / 180.0;
-        
+
         let a = self.semi_major_axis;
         let b = self.semi_minor_axis;
         let f = (a - b) / a; // flattening
-        
+
         let u1 = ((1.0 - f) * lat1.tan()).atan();
         let u2 = ((1.0 - f) * lat2.tan()).atan();
-        
+
         let sin_u1 = u1.sin();
         let cos_u1 = u1.cos();
         let sin_u2 = u2.sin();
         let cos_u2 = u2.cos();
-        
+
         let mut lambda = delta_lon;
         let mut lambda_prev;
         let mut iter_limit = 100;
-        
+
         let (sin_sigma, cos_sigma, sigma, sin_alpha, cos_sq_alpha, cos_2sigma_m) = loop {
             let sin_lambda = lambda.sin();
             let cos_lambda = lambda.cos();
-            
-            let sin_sigma = ((cos_u2 * sin_lambda).powi(2) + 
-                           (cos_u1 * sin_u2 - sin_u1 * cos_u2 * cos_lambda).powi(2)).sqrt();
-            
+
+            let sin_sigma = ((cos_u2 * sin_lambda).powi(2)
+                + (cos_u1 * sin_u2 - sin_u1 * cos_u2 * cos_lambda).powi(2))
+            .sqrt();
+
             if sin_sigma == 0.0 {
                 // Co-incident points
                 return N::zero();
             }
-            
+
             let cos_sigma = sin_u1 * sin_u2 + cos_u1 * cos_u2 * cos_lambda;
             let sigma = sin_sigma.atan2(cos_sigma);
-            
+
             let sin_alpha = cos_u1 * cos_u2 * sin_lambda / sin_sigma;
             let cos_sq_alpha = 1.0 - sin_alpha * sin_alpha;
-            
+
             let cos_2sigma_m = if cos_sq_alpha == 0.0 {
                 0.0 // Equatorial line
             } else {
                 cos_sigma - 2.0 * sin_u1 * sin_u2 / cos_sq_alpha
             };
-            
+
             let c = f / 16.0 * cos_sq_alpha * (4.0 + f * (4.0 - 3.0 * cos_sq_alpha));
-            
+
             lambda_prev = lambda;
-            lambda = delta_lon + (1.0 - c) * f * sin_alpha * 
-                    (sigma + c * sin_sigma * (cos_2sigma_m + c * cos_sigma * (-1.0 + 2.0 * cos_2sigma_m * cos_2sigma_m)));
-            
+            lambda = delta_lon
+                + (1.0 - c)
+                    * f
+                    * sin_alpha
+                    * (sigma
+                        + c * sin_sigma
+                            * (cos_2sigma_m
+                                + c * cos_sigma * (-1.0 + 2.0 * cos_2sigma_m * cos_2sigma_m)));
+
             iter_limit -= 1;
             if iter_limit == 0 || (lambda - lambda_prev).abs() < 1e-12 {
-                break (sin_sigma, cos_sigma, sigma, sin_alpha, cos_sq_alpha, cos_2sigma_m);
+                break (
+                    sin_sigma,
+                    cos_sigma,
+                    sigma,
+                    sin_alpha,
+                    cos_sq_alpha,
+                    cos_2sigma_m,
+                );
             }
         };
-        
+
         let u_sq = cos_sq_alpha * (a * a - b * b) / (b * b);
-        let big_a = 1.0 + u_sq / 16384.0 * (4096.0 + u_sq * (-768.0 + u_sq * (320.0 - 175.0 * u_sq)));
+        let big_a =
+            1.0 + u_sq / 16384.0 * (4096.0 + u_sq * (-768.0 + u_sq * (320.0 - 175.0 * u_sq)));
         let big_b = u_sq / 1024.0 * (256.0 + u_sq * (-128.0 + u_sq * (74.0 - 47.0 * u_sq)));
-        
-        let delta_sigma = big_b * sin_sigma * (cos_2sigma_m + big_b / 4.0 * 
-                         (cos_sigma * (-1.0 + 2.0 * cos_2sigma_m * cos_2sigma_m) - 
-                          big_b / 6.0 * cos_2sigma_m * (-3.0 + 4.0 * sin_sigma * sin_sigma) * 
-                          (-3.0 + 4.0 * cos_2sigma_m * cos_2sigma_m)));
-        
+
+        let delta_sigma = big_b
+            * sin_sigma
+            * (cos_2sigma_m
+                + big_b / 4.0
+                    * (cos_sigma * (-1.0 + 2.0 * cos_2sigma_m * cos_2sigma_m)
+                        - big_b / 6.0
+                            * cos_2sigma_m
+                            * (-3.0 + 4.0 * sin_sigma * sin_sigma)
+                            * (-3.0 + 4.0 * cos_2sigma_m * cos_2sigma_m)));
+
         let distance = b * big_a * (sigma - delta_sigma);
-        
+
         N::from_f64(distance).unwrap_or(N::max_value())
     }
-    
-    fn distance_to_bbox(&self, lon: N, lat: N, min_lon: N, min_lat: N, max_lon: N, max_lat: N) -> N {
+
+    fn distance_to_bbox(
+        &self,
+        lon: N,
+        lat: N,
+        min_lon: N,
+        min_lat: N,
+        max_lon: N,
+        max_lat: N,
+    ) -> N {
         // For bbox distance with Spheroid, we approximate using the closest point on the bbox
         let closest_lon = if lon < min_lon {
             min_lon
@@ -232,7 +267,7 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
         } else {
             lon
         };
-        
+
         let closest_lat = if lat < min_lat {
             min_lat
         } else if lat > max_lat {
@@ -240,7 +275,7 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
         } else {
             lat
         };
-        
+
         self.distance(lon, lat, closest_lon, closest_lat)
     }
 }
@@ -260,14 +295,14 @@ fn axis_dist<N: IndexableNum>(k: N, min: N, max: N) -> N {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_euclidean_distance() {
         let metric = EuclideanDistance;
         let distance = metric.distance(0.0, 0.0, 3.0, 4.0);
         assert!((distance - 5.0).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_haversine_distance() {
         let metric = HaversineDistance::default();
@@ -276,7 +311,7 @@ mod tests {
         // Should be approximately 5585 km
         assert!((distance - 5585000.0).abs() < 50000.0);
     }
-    
+
     #[test]
     fn test_spheroid_distance() {
         let metric = SpheroidDistance::default();
