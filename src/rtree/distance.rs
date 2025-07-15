@@ -180,7 +180,7 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
         let mut lambda_prev;
         let mut iter_limit = 100;
 
-        let (sin_sigma, cos_sigma, sigma, sin_alpha, cos_sq_alpha, cos_2sigma_m) = loop {
+        let (sin_sigma, cos_sigma, sigma, _sin_alpha, cos_sq_alpha, cos_2sigma_m) = loop {
             let sin_lambda = lambda.sin();
             let cos_lambda = lambda.cos();
 
@@ -299,25 +299,25 @@ mod tests {
     #[test]
     fn test_euclidean_distance() {
         let metric = EuclideanDistance;
-        let distance = metric.distance(0.0, 0.0, 3.0, 4.0);
-        assert!((distance - 5.0).abs() < 1e-10);
+        let distance = metric.distance(0.0f64, 0.0f64, 3.0f64, 4.0f64);
+        assert!((distance - 5.0f64).abs() < 1e-10);
     }
 
     #[test]
     fn test_haversine_distance() {
         let metric = HaversineDistance::default();
         // Distance between New York and London (approximately)
-        let distance = metric.distance(-74.0, 40.7, -0.1, 51.5);
+        let distance = metric.distance(-74.0f64, 40.7f64, -0.1f64, 51.5f64);
         // Should be approximately 5585 km
-        assert!((distance - 5585000.0).abs() < 50000.0);
+        assert!((distance - 5585000.0f64).abs() < 50000.0f64);
     }
 
     #[test]
     fn test_spheroid_distance() {
         let metric = SpheroidDistance::default();
         // Distance between New York and London (approximately)
-        let distance = metric.distance(-74.0, 40.7, -0.1, 51.5);
+        let distance = metric.distance(-74.0f64, 40.7f64, -0.1f64, 51.5f64);
         // Should be approximately 5585 km (slightly different from Haversine)
-        assert!((distance - 5585000.0).abs() < 50000.0);
+        assert!((distance - 5585000.0f64).abs() < 50000.0f64);
     }
 }
