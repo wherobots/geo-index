@@ -126,7 +126,7 @@ impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
 pub struct SpheroidDistance {
     /// Semi-major axis (equatorial radius) in meters
     pub semi_major_axis: f64,
-    /// Semi-minor axis (polar radius) in meters  
+    /// Semi-minor axis (polar radius) in meters
     pub semi_minor_axis: f64,
 }
 
