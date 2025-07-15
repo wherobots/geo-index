@@ -34,14 +34,14 @@ impl<N: IndexableNum> DistanceMetric<N> for EuclideanDistance {
     fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N {
         let dx = x1 - x2;
         let dy = y1 - y2;
-        (dx * dx + dy * dy).sqrt()
+        (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
     }
 
     #[inline]
     fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
         let dx = axis_dist(x, min_x, max_x);
         let dy = axis_dist(y, min_y, max_y);
-        (dx * dx + dy * dy).sqrt()
+        (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
     }
 }
 
@@ -256,7 +256,7 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
 
         let distance = b * big_a * (sigma - delta_sigma);
 
-        N::from_f64(distance).ok_or_else(|| "Failed to convert distance to target type".to_string())
+        N::from_f64(distance).unwrap_or(N::max_value())
     }
 
     fn distance_to_bbox(
