@@ -74,10 +74,10 @@ impl HaversineDistance {
 
 impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
     fn distance(&self, lon1: N, lat1: N, lon2: N, lat2: N) -> N {
-        let lat1_rad = lat1.to_f64().unwrap() * PI / 180.0;
-        let lat2_rad = lat2.to_f64().unwrap() * PI / 180.0;
-        let delta_lat = (lat2.to_f64().unwrap() - lat1.to_f64().unwrap()) * PI / 180.0;
-        let delta_lon = (lon2.to_f64().unwrap() - lon1.to_f64().unwrap()) * PI / 180.0;
+        let lat1_rad = lat1.to_f64().unwrap_or(0.0) * PI / 180.0;
+        let lat2_rad = lat2.to_f64().unwrap_or(0.0) * PI / 180.0;
+        let delta_lat = (lat2.to_f64().unwrap_or(0.0) - lat1.to_f64().unwrap_or(0.0)) * PI / 180.0;
+        let delta_lon = (lon2.to_f64().unwrap_or(0.0) - lon1.to_f64().unwrap_or(0.0)) * PI / 180.0;
 
         let a = (delta_lat / 2.0).sin().powi(2)
             + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
