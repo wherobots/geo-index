@@ -160,9 +160,18 @@ impl SpheroidDistance {
 impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
     fn distance(&self, lon1: N, lat1: N, lon2: N, lat2: N) -> N {
         // Vincenty's formulae for distance on ellipsoid
-        let lat1 = lat1.to_f64().unwrap() * PI / 180.0;
-        let lat2 = lat2.to_f64().unwrap() * PI / 180.0;
-        let delta_lon = (lon2.to_f64().unwrap() - lon1.to_f64().unwrap()) * PI / 180.0;
+        let lat1 = match lat1.to_f64() {
+            Some(value) => value * PI / 180.0,
+            None => return N::zero(), // Return a default value if conversion fails
+        };
+        let lat2 = match lat2.to_f64() {
+            Some(value) => value * PI / 180.0,
+            None => return N::zero(),
+        };
+        let delta_lon = match (lon2.to_f64(), lon1.to_f64()) {
+            (Some(lon2_value), Some(lon1_value)) => (lon2_value - lon1_value) * PI / 180.0,
+            _ => return N::zero(),
+        };
 
         let a = self.semi_major_axis;
         let b = self.semi_minor_axis;
