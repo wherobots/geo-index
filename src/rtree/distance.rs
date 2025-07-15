@@ -256,7 +256,7 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
 
         let distance = b * big_a * (sigma - delta_sigma);
 
-        N::from_f64(distance).unwrap_or(N::max_value())
+        N::from_f64(distance).ok_or_else(|| "Failed to convert distance to target type".to_string())
     }
 
     fn distance_to_bbox(
