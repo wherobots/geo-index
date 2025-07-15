@@ -74,10 +74,10 @@ impl HaversineDistance {
 
 impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
     fn distance(&self, lon1: N, lat1: N, lon2: N, lat2: N) -> N {
-        let lat1_rad = lat1.to_f64().unwrap() * PI / 180.0;
-        let lat2_rad = lat2.to_f64().unwrap() * PI / 180.0;
-        let delta_lat = (lat2.to_f64().unwrap() - lat1.to_f64().unwrap()) * PI / 180.0;
-        let delta_lon = (lon2.to_f64().unwrap() - lon1.to_f64().unwrap()) * PI / 180.0;
+        let lat1_rad = lat1.to_f64().unwrap_or(0.0) * PI / 180.0;
+        let lat2_rad = lat2.to_f64().unwrap_or(0.0) * PI / 180.0;
+        let delta_lat = (lat2.to_f64().unwrap_or(0.0) - lat1.to_f64().unwrap_or(0.0)) * PI / 180.0;
+        let delta_lon = (lon2.to_f64().unwrap_or(0.0) - lon1.to_f64().unwrap_or(0.0)) * PI / 180.0;
 
         let a = (delta_lat / 2.0).sin().powi(2)
             + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
@@ -126,7 +126,7 @@ impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
 pub struct SpheroidDistance {
     /// Semi-major axis (equatorial radius) in meters
     pub semi_major_axis: f64,
-    /// Semi-minor axis (polar radius) in meters  
+    /// Semi-minor axis (polar radius) in meters
     pub semi_minor_axis: f64,
 }
 
@@ -160,9 +160,18 @@ impl SpheroidDistance {
 impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
     fn distance(&self, lon1: N, lat1: N, lon2: N, lat2: N) -> N {
         // Vincenty's formulae for distance on ellipsoid
-        let lat1 = lat1.to_f64().unwrap() * PI / 180.0;
-        let lat2 = lat2.to_f64().unwrap() * PI / 180.0;
-        let delta_lon = (lon2.to_f64().unwrap() - lon1.to_f64().unwrap()) * PI / 180.0;
+        let lat1 = match lat1.to_f64() {
+            Some(value) => value * PI / 180.0,
+            None => return N::zero(), // Return a default value if conversion fails
+        };
+        let lat2 = match lat2.to_f64() {
+            Some(value) => value * PI / 180.0,
+            None => return N::zero(),
+        };
+        let delta_lon = match (lon2.to_f64(), lon1.to_f64()) {
+            (Some(lon2_value), Some(lon1_value)) => (lon2_value - lon1_value) * PI / 180.0,
+            _ => return N::zero(),
+        };
 
         let a = self.semi_major_axis;
         let b = self.semi_minor_axis;
@@ -247,7 +256,7 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
 
         let distance = b * big_a * (sigma - delta_sigma);
 
-        N::from_f64(distance).unwrap_or(N::max_value())
+        N::from_f64(distance).ok_or_else(|| "Failed to convert distance to target type".to_string())
     }
 
     fn distance_to_bbox(

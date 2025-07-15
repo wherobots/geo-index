@@ -31,8 +31,16 @@ pub trait IndexableNum:
     }
 
     /// Get the square root of this value
-    fn sqrt(self) -> Self {
-        NumCast::from(self.to_f64().unwrap().sqrt()).unwrap()
+    fn sqrt(self) -> Option<Self> {
+        self.to_f64()
+            .and_then(|value| {
+                if value >= 0.0 {
+                    Some(value.sqrt())
+                } else {
+                    None
+                }
+            })
+            .and_then(NumCast::from)
     }
 }
 
