@@ -203,7 +203,7 @@ pub fn benchmark_search(c: &mut Criterion) {
 
         // Search benchmarks with OnceCell for lazy, one-time index construction
         let hilbert_f64_index: OnceCell<RTree<f64>> = OnceCell::new();
-        c.bench_function(&format!("search_{}_hilbert_f64", name_suffix), |b| {
+        c.bench_function(&format!("search_{name_suffix}_hilbert_f64"), |b| {
             b.iter(|| {
                 let index = hilbert_f64_index.get_or_init(|| construct_rtree_hilbert(&index_data));
                 for _ in 0..queries_per_iter {
@@ -214,7 +214,7 @@ pub fn benchmark_search(c: &mut Criterion) {
         });
 
         let str_f64_index: OnceCell<RTree<f64>> = OnceCell::new();
-        c.bench_function(&format!("search_{}_str_f64", name_suffix), |b| {
+        c.bench_function(&format!("search_{name_suffix}_str_f64"), |b| {
             b.iter(|| {
                 let index = str_f64_index.get_or_init(|| construct_rtree_str(&index_data));
                 for _ in 0..queries_per_iter {
@@ -225,7 +225,7 @@ pub fn benchmark_search(c: &mut Criterion) {
         });
 
         let hilbert_f32_index: OnceCell<RTree<f32>> = OnceCell::new();
-        c.bench_function(&format!("search_{}_hilbert_f32", name_suffix), |b| {
+        c.bench_function(&format!("search_{name_suffix}_hilbert_f32"), |b| {
             b.iter(|| {
                 let index = hilbert_f32_index
                     .get_or_init(|| construct_rtree_hilbert_f32_with_cast(&index_data));
@@ -239,7 +239,7 @@ pub fn benchmark_search(c: &mut Criterion) {
         });
 
         let str_f32_index: OnceCell<RTree<f32>> = OnceCell::new();
-        c.bench_function(&format!("search_{}_str_f32", name_suffix), |b| {
+        c.bench_function(&format!("search_{name_suffix}_str_f32"), |b| {
             b.iter(|| {
                 let index =
                     str_f32_index.get_or_init(|| construct_rtree_str_f32_with_cast(&index_data));
