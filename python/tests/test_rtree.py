@@ -54,3 +54,57 @@ def test_partitions():
 
     assert np.all(np.asarray(indices) == np.arange(5))
     assert len(np.unique(np.asarray(partition_id))) == 3
+
+
+def test_neighbors():
+    """Test basic neighbors functionality"""
+    tree = create_index()
+    
+    # Test neighbors (backward compatibility)
+    result = rt.neighbors(tree, 0.0, 0.0, max_results=3)
+    assert len(result) <= 3
+    result_array = np.asarray(result)
+    # Should return indices in order of distance from (0,0)
+    assert result_array[0] == 0  # First item should be closest
+
+
+def test_neighbors_with_distance():
+    """Test neighbors with different distance metrics"""
+    tree = create_index()
+    
+    # Test with Euclidean distance
+    result_euclidean = rt.neighbors_with_distance(
+        tree, 0.0, 0.0, rt.PyDistanceMetric.Euclidean, max_results=3
+    )
+    assert len(result_euclidean) <= 3
+    
+    # Test with Haversine distance (should work for geographic coordinates)
+    result_haversine = rt.neighbors_with_distance(
+        tree, 0.0, 0.0, rt.PyDistanceMetric.Haversine, max_results=3
+    )
+    assert len(result_haversine) <= 3
+    
+    # Test with Spheroid distance
+    result_spheroid = rt.neighbors_with_distance(
+        tree, 0.0, 0.0, rt.PyDistanceMetric.Spheroid, max_results=3
+    )
+    assert len(result_spheroid) <= 3
+    
+    # Results should be similar for small distances (but order might vary)
+    euclidean_array = np.asarray(result_euclidean)
+    haversine_array = np.asarray(result_haversine)
+    spheroid_array = np.asarray(result_spheroid)
+    
+    # All should return the same number of results
+    assert len(euclidean_array) == len(haversine_array) == len(spheroid_array)
+
+
+def test_distance_metric_enum():
+    """Test that distance metric enum values work correctly"""
+    # Test enum values
+    assert rt.PyDistanceMetric.Euclidean == rt.PyDistanceMetric.Euclidean
+    assert rt.PyDistanceMetric.Haversine == rt.PyDistanceMetric.Haversine
+    assert rt.PyDistanceMetric.Spheroid == rt.PyDistanceMetric.Spheroid
+    
+    # Test that different enums are not equal
+    assert rt.PyDistanceMetric.Euclidean != rt.PyDistanceMetric.Haversine

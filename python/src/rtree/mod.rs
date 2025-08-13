@@ -24,9 +24,11 @@ pub fn register_rtree_module(
     child_module.add_class::<builder::PyRTree>()?;
     child_module.add_class::<builder::PyRTreeBuilder>()?;
     child_module.add_class::<metadata::PyRTreeMetadata>()?;
+    child_module.add_class::<neighbors::PyDistanceMetric>()?;
     child_module.add_wrapped(wrap_pyfunction!(boxes_at_level::boxes_at_level))?;
     child_module.add_wrapped(wrap_pyfunction!(intersection::tree_join))?;
     child_module.add_wrapped(wrap_pyfunction!(neighbors::neighbors))?;
+    child_module.add_wrapped(wrap_pyfunction!(neighbors::neighbors_with_distance))?;
     child_module.add_wrapped(wrap_pyfunction!(partitions::partition_boxes))?;
     child_module.add_wrapped(wrap_pyfunction!(partitions::partitions))?;
     child_module.add_wrapped(wrap_pyfunction!(search::search))?;
