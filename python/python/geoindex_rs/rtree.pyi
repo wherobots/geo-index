@@ -81,6 +81,9 @@ def neighbors(
 ) -> Array:
     """Search items in order of distance from the given point.
 
+    This method uses Euclidean distance by default. For other distance metrics,
+    use [`neighbors_with_distance`][geoindex_rs.rtree.neighbors_with_distance].
+
     **Example:**
 
     ```py
@@ -110,6 +113,89 @@ def neighbors(
 
     Returns:
         An Arrow array with the insertion indexes of query results.
+    """
+
+def neighbors_with_distance(
+    index: IndexLike,
+    x: int | float,
+    y: int | float,
+    distance_metric: PyDistanceMetric,
+    *,
+    max_results: int | None,
+    max_distance: int | float | None,
+) -> Array:
+    """Search items in order of distance from the given point using a custom distance metric.
+
+    This method allows you to specify a custom distance calculation method, such as
+    Euclidean, Haversine, or Spheroid distance.
+
+    **Example:**
+
+    ```py
+    import numpy as np
+    from geoindex_rs import rtree as rt
+
+    # Create an RTree with geographic coordinates (longitude, latitude)
+    builder = rt.RTreeBuilder(3)
+    # New York, London, Tokyo
+    lons = np.array([-74.0, -0.1, 139.7])
+    lats = np.array([40.7, 51.5, 35.7])
+    builder.add(lons, lats, lons, lats)
+    tree = builder.finish()
+
+    # Find nearest neighbors using Haversine distance (great-circle distance)
+    results = rt.neighbors_with_distance(
+        tree, -74.0, 40.7, rt.PyDistanceMetric.Haversine, max_results=2
+    )
+    ```
+
+    Args:
+        index: the RTree to search.
+        x: the `x` coordinate of the query point
+        y: the `y` coordinate of the query point
+        distance_metric: The distance metric to use for calculations.
+        max_results: The maximum number of results to search. If not provided, all
+            results (within `max_distance`) will be returned.
+        max_distance: The maximum distance from the query point to search. If not
+            provided, all results (up to `max_results`) will be returned.
+
+    Returns:
+        An Arrow array with the insertion indexes of query results.
+    """
+
+class PyDistanceMetric:
+    """Distance metrics for spatial queries.
+    
+    This enum provides different distance calculation methods for spatial queries:
+    
+    - `Euclidean`: Standard straight-line distance for planar coordinates
+    - `Haversine`: Great-circle distance on a sphere for geographic coordinates  
+    - `Spheroid`: High-precision distance on an ellipsoid for geographic coordinates
+    """
+    Euclidean: PyDistanceMetric
+    """Euclidean distance metric for planar coordinates.
+    
+    This is the standard straight-line distance calculation suitable for
+    planar coordinate systems. When working with longitude/latitude coordinates,
+    the unit of distance will be degrees.
+    """
+    
+    Haversine: PyDistanceMetric
+    """Haversine distance metric for geographic coordinates.
+    
+    This calculates the great-circle distance between two points on a sphere.
+    It's more accurate for geographic distances than Euclidean distance.
+    The input coordinates should be in longitude/latitude (degrees), and
+    the output distance is in meters.
+    """
+    
+    Spheroid: PyDistanceMetric
+    """Spheroid distance metric for high-precision geographic coordinates.
+    
+    This calculates the shortest distance between two points on the surface
+    of a spheroid (ellipsoid), providing a more accurate Earth model than
+    a simple sphere. The input coordinates should be in longitude/latitude
+    (degrees), and the output distance is in meters.
     """
 
 def partitions(index: IndexLike, *, copy=False) -> RecordBatch:
