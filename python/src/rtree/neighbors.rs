@@ -13,11 +13,8 @@ use crate::rtree::input::PyRTreeRef;
 #[pyclass(eq, eq_int)]
 #[derive(PartialEq, Eq)]
 pub enum PyDistanceMetric {
-    #[pyo3(name = "euclidean")]
     Euclidean,
-    #[pyo3(name = "haversine")]
     Haversine,
-    #[pyo3(name = "spheroid")]
     Spheroid,
 }
 
