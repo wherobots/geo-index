@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_spheroid_distance() {
-        let metric = SpheroidDistance::default();
+        let metric = SpheroidDistance;
         // Distance between New York and London (approximately)
         let distance = metric.distance(-74.0f64, 40.7f64, -0.1f64, 51.5f64);
         // Should be approximately 5585 km (slightly different from Haversine)

@@ -605,7 +605,7 @@ mod test {
             builder.add(139.7, 35.7, 139.7, 35.7); // Tokyo
             let tree = builder.finish::<HilbertSort>();
 
-            let spheroid = SpheroidDistance::default();
+            let spheroid = SpheroidDistance;
             let results = tree.neighbors_with_distance(-74.0, 40.7, None, None, &spheroid);
 
             // From New York, should find New York first, then London, then Tokyo
