@@ -6,6 +6,8 @@
 use crate::r#type::IndexableNum;
 use geo::algorithm::{Distance, Euclidean, Geodesic, Haversine};
 use geo::{Geometry, Point};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 /// A trait for calculating distances between geometries and points.
 pub trait DistanceMetric<N: IndexableNum> {
@@ -227,6 +229,188 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
     }
 }
 
+/// A trait for calculating distances using indices rather than direct geometry references.
+/// This allows for more flexible implementations including:
+/// - On-demand WKB decoding
+/// - Caching of decoded geometries
+/// - Custom storage backends
+/// - Lazy evaluation strategies
+pub trait IndexedDistanceMetric<N: IndexableNum> {
+    /// Calculate the distance between a query geometry and an indexed item.
+    ///
+    /// # Arguments
+    /// * `query_index` - Index of the query geometry (-1 for external query)
+    /// * `item_index` - Index of the item being compared
+    /// * `query_geometry` - The query geometry (if query_index is -1)
+    /// * `item_bbox` - The bounding box of the item (for optimization)
+    fn indexed_distance(
+        &self,
+        query_index: i32,
+        item_index: usize,
+        query_geometry: Option<&Geometry<f64>>,
+        item_bbox: (N, N, N, N),
+    ) -> N;
+
+    /// Calculate the distance from a point to a bounding box (for tree traversal).
+    fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N;
+
+    /// Return the maximum distance value for this metric.
+    fn max_distance(&self) -> N {
+        N::max_value()
+    }
+}
+
+/// Adapter that uses a geometry array with Euclidean distance.
+/// This provides backward compatibility with the existing API.
+pub struct GeometryArrayAdapter<'a> {
+    geometries: &'a [Geometry<f64>],
+    distance_metric: Box<dyn DistanceMetric<f64> + 'a>,
+}
+
+impl<'a> GeometryArrayAdapter<'a> {
+    /// Create a new adapter from a slice of geometries with a specific distance metric.
+    pub fn new(geometries: &'a [Geometry<f64>], distance_metric: Box<dyn DistanceMetric<f64> + 'a>) -> Self {
+        Self { geometries, distance_metric }
+    }
+
+    /// Create a new adapter with Euclidean distance (for backward compatibility).
+    pub fn euclidean(geometries: &'a [Geometry<f64>]) -> Self {
+        Self {
+            geometries,
+            distance_metric: Box::new(EuclideanDistance),
+        }
+    }
+}
+
+impl<'a, N: IndexableNum> IndexedDistanceMetric<N> for GeometryArrayAdapter<'a> {
+    fn indexed_distance(
+        &self,
+        _query_index: i32,
+        item_index: usize,
+        query_geometry: Option<&Geometry<f64>>,
+        _item_bbox: (N, N, N, N),
+    ) -> N {
+        if let Some(query) = query_geometry {
+            if item_index < self.geometries.len() {
+                let distance: f64 = self.distance_metric.geometry_to_geometry_distance(query, &self.geometries[item_index]);
+                N::from_f64(distance).unwrap_or(N::max_value())
+            } else {
+                N::max_value()
+            }
+        } else {
+            N::max_value()
+        }
+    }
+
+    fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
+        // Convert N to f64 for the underlying distance metric
+        let x_f64 = x.to_f64().unwrap_or(0.0);
+        let y_f64 = y.to_f64().unwrap_or(0.0);
+        let min_x_f64 = min_x.to_f64().unwrap_or(0.0);
+        let min_y_f64 = min_y.to_f64().unwrap_or(0.0);
+        let max_x_f64 = max_x.to_f64().unwrap_or(0.0);
+        let max_y_f64 = max_y.to_f64().unwrap_or(0.0);
+
+        let distance: f64 = self.distance_metric.distance_to_bbox(
+            x_f64, y_f64, min_x_f64, min_y_f64, max_x_f64, max_y_f64
+        );
+
+        N::from_f64(distance).unwrap_or(N::max_value())
+    }
+}
+
+/// Example implementation with caching for decoded geometries.
+/// This demonstrates how WKB decoding could be cached.
+pub struct CachedWkbDistance<F>
+where
+    F: Fn(usize) -> Option<Vec<u8>>,
+{
+    /// Function to retrieve WKB bytes for a given index
+    wkb_provider: F,
+    /// Cache for decoded geometries
+    cache: RefCell<HashMap<usize, Geometry<f64>>>,
+}
+
+impl<F> CachedWkbDistance<F>
+where
+    F: Fn(usize) -> Option<Vec<u8>>,
+{
+    /// Create a new cached WKB distance metric with the given WKB provider function.
+    pub fn new(wkb_provider: F) -> Self {
+        Self {
+            wkb_provider,
+            cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn get_geometry(&self, index: usize) -> Option<Geometry<f64>> {
+        // Check cache first
+        if let Some(geom) = self.cache.borrow().get(&index) {
+            return Some(geom.clone());
+        }
+
+        // Decode WKB if not in cache
+        if let Some(wkb_bytes) = (self.wkb_provider)(index) {
+            // Note: This is a placeholder for actual WKB decoding
+            // In practice, you'd use a WKB library like wkb or geo-wkb
+            let decoded = decode_wkb_placeholder(&wkb_bytes);
+            if let Some(geom) = decoded {
+                self.cache.borrow_mut().insert(index, geom.clone());
+                return Some(geom);
+            }
+        }
+
+        None
+    }
+}
+
+impl<F, N> IndexedDistanceMetric<N> for CachedWkbDistance<F>
+where
+    F: Fn(usize) -> Option<Vec<u8>>,
+    N: IndexableNum,
+{
+    fn indexed_distance(
+        &self,
+        query_index: i32,
+        item_index: usize,
+        query_geometry: Option<&Geometry<f64>>,
+        _item_bbox: (N, N, N, N),
+    ) -> N {
+        let query_geom = if query_index >= 0 {
+            self.get_geometry(query_index as usize)
+        } else {
+            query_geometry.cloned()
+        };
+
+        if let Some(query) = query_geom {
+            if let Some(item) = self.get_geometry(item_index) {
+                let distance = Euclidean.distance(&query, &item);
+                return N::from_f64(distance).unwrap_or(N::max_value());
+            }
+        }
+
+        N::max_value()
+    }
+
+    fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
+        let dx = axis_dist(x, min_x, max_x);
+        let dy = axis_dist(y, min_y, max_y);
+        (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
+    }
+}
+
+/// Placeholder for WKB decoding - in practice use a proper WKB library
+fn decode_wkb_placeholder(wkb: &[u8]) -> Option<Geometry<f64>> {
+    // This would be replaced with actual WKB decoding
+    // For testing, use the first byte to determine a simple point location
+    if let Some(&first_byte) = wkb.first() {
+        let coord = first_byte as f64 * 3.0 + 0.5;
+        Some(Geometry::Point(Point::new(coord, coord)))
+    } else {
+        Some(Geometry::Point(Point::new(0.0, 0.0)))
+    }
+}
+
 /// 1D distance from a value to a range.
 #[inline]
 fn axis_dist<N: IndexableNum>(k: N, min: N, max: N) -> N {
@@ -306,5 +490,52 @@ mod tests {
         let distance: f64 = metric.geometry_to_geometry_distance(&ny_point, &london_point);
         // Should be approximately 5585 km
         assert!((distance - 5585000.0).abs() < 50000.0);
+    }
+
+    #[test]
+    fn test_geometry_array_adapter() {
+        let geometries = vec![
+            Geometry::Point(Point::new(0.0, 0.0)),
+            Geometry::Point(Point::new(3.0, 4.0)),
+            Geometry::LineString(LineString::new(vec![
+                geo_types::coord! { x: 0.0, y: 5.0 },
+                geo_types::coord! { x: 10.0, y: 5.0 },
+            ])),
+        ];
+
+        let adapter = GeometryArrayAdapter::euclidean(&geometries);
+        let query = Geometry::Point(Point::new(1.0, 1.0));
+
+        // Test distance to first point
+        let dist: f64 = adapter.indexed_distance(-1, 0, Some(&query), (0.0, 0.0, 0.0, 0.0));
+        assert!((dist - 1.414).abs() < 0.01);
+
+        // Test distance to second point
+        let dist: f64 = adapter.indexed_distance(-1, 1, Some(&query), (3.0, 4.0, 3.0, 4.0));
+        assert!((dist - 3.605).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cached_wkb_distance() {
+        // Simulate WKB storage
+        let wkb_storage = vec![
+            vec![1, 2, 3], // Placeholder WKB for point at (0, 0)
+            vec![4, 5, 6], // Placeholder WKB for point at (3, 4)
+        ];
+
+        let distance_metric = CachedWkbDistance::new(move |index| {
+            wkb_storage.get(index).cloned()
+        });
+
+        let query = Geometry::Point(Point::new(1.0, 1.0));
+
+        // First call should decode and cache
+        let _dist: f64 = distance_metric.indexed_distance(-1, 0, Some(&query), (0.0, 0.0, 0.0, 0.0));
+
+        // Verify item is cached
+        assert!(distance_metric.cache.borrow().contains_key(&0));
+
+        // Second call should use cache
+        let _dist: f64 = distance_metric.indexed_distance(-1, 0, Some(&query), (0.0, 0.0, 0.0, 0.0));
     }
 }
