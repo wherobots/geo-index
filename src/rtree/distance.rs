@@ -431,8 +431,7 @@ mod tests {
 
     #[test]
     fn test_wkb_decoding_distance_metric() {
-        use std::io::Cursor;
-        use wkb::wkb_to_geom;
+        use geozero::{wkb, GeozeroGeometry};
 
         /// Custom distance metric that stores WKB-encoded geometries and decodes them on-demand
         struct WkbIndexedDistance<'a> {
@@ -451,8 +450,18 @@ mod tests {
             /// Decode WKB data on-demand to get geometry
             fn decode_geometry(&self, index: usize) -> Option<Geometry<f64>> {
                 if index < self.wkb_data.len() {
-                    let mut cursor = Cursor::new(&self.wkb_data[index]);
-                    wkb_to_geom(&mut cursor).ok()
+                    use geozero::geo_types::GeoWriter;
+
+                    let mut geo_writer = GeoWriter::new();
+                    // Pass the byte slice directly to Wkb
+                    if wkb::Wkb(self.wkb_data[index].as_slice())
+                        .process_geom(&mut geo_writer)
+                        .is_ok()
+                    {
+                        geo_writer.take_geometry()
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -493,9 +502,11 @@ mod tests {
         let point2 = Geometry::Point(Point::new(3.0, 4.0));
         let point3 = Geometry::Point(Point::new(6.0, 8.0));
 
-        let wkb1 = wkb::geom_to_wkb(&point1).unwrap();
-        let wkb2 = wkb::geom_to_wkb(&point2).unwrap();
-        let wkb3 = wkb::geom_to_wkb(&point3).unwrap();
+        // Encode geometries to WKB using geozero
+        use geozero::ToWkb;
+        let wkb1 = point1.to_wkb(geozero::CoordDimensions::default()).unwrap();
+        let wkb2 = point2.to_wkb(geozero::CoordDimensions::default()).unwrap();
+        let wkb3 = point3.to_wkb(geozero::CoordDimensions::default()).unwrap();
         let wkb_data = vec![wkb1, wkb2, wkb3];
 
         // Create the WKB-based distance metric
