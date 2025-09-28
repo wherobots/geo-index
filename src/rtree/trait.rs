@@ -297,9 +297,9 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
         )
     }
 
-    /// Search items in order of distance from a query geometry using an index-based distance metric.
+    /// Search items in order of distance from a query geometry using an indexed distance metric.
     ///
-    /// This method provides maximum flexibility by allowing the distance metric
+    /// This method provides maximum flexibility by allowing the indexed metric (or adapter)
     /// to access geometries via indices rather than requiring them to be passed directly.
     /// This enables:
     /// - On-demand WKB decoding
@@ -342,11 +342,11 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
         query_geometry: &geo::Geometry<f64>,
         max_results: Option<usize>,
         max_distance: Option<N>,
-        distance_metric: &dyn IndexedDistanceMetric<N>,
+        indexed_metric: &dyn IndexedDistanceMetric<N>,
     ) -> Vec<u32> {
         let boxes = self.boxes();
         let indices = self.indices();
-        let max_distance = max_distance.unwrap_or(distance_metric.max_distance());
+        let max_distance = max_distance.unwrap_or(indexed_metric.max_distance());
 
         // Get the bounding box of the query geometry
         let bounds = query_geometry.bounding_rect();
@@ -382,7 +382,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
                     let center_x = (query_min_x + query_max_x) / (N::one() + N::one());
                     let center_y = (query_min_y + query_max_y) / (N::one() + N::one());
 
-                    distance_metric.distance_to_bbox(
+                    indexed_metric.distance_to_bbox(
                         center_x,
                         center_y,
                         boxes[pos],
@@ -392,7 +392,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
                     )
                 } else {
                     // For leaf items, use indexed distance calculation
-                    distance_metric.indexed_distance(
+                    indexed_metric.indexed_distance(
                         -1, // External query
                         index,
                         Some(query_geometry),
