@@ -393,7 +393,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
                 } else {
                     // For leaf items, use indexed distance calculation
                     distance_metric.indexed_distance(
-                        -1,  // External query
+                        -1, // External query
                         index,
                         Some(query_geometry),
                         (boxes[pos], boxes[pos + 1], boxes[pos + 2], boxes[pos + 3]),
@@ -727,8 +727,7 @@ mod test {
 
             let query_geom = Geometry::Point(Point::new(5.0, 5.0));
             let adapter = GeometryArrayAdapter::euclidean(&geometries);
-            let results =
-                tree.neighbors_geometry(&query_geom, Some(3), None, &adapter);
+            let results = tree.neighbors_geometry(&query_geom, Some(3), None, &adapter);
 
             assert_eq!(results.len(), 3);
             // Should get the 3 closest items

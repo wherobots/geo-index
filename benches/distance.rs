@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use geo::{Geometry, LineString, Point, Polygon};
 use geo_index::rtree::distance::{
-    DistanceMetric, EuclideanDistance, HaversineDistance, SpheroidDistance,
+    DistanceMetric, EuclideanDistance, GeometryArrayAdapter, HaversineDistance, SpheroidDistance,
 };
 use geo_index::rtree::sort::HilbertSort;
 use geo_index::rtree::{RTreeBuilder, RTreeIndex};
@@ -119,21 +119,18 @@ fn benchmark_distance_metrics(c: &mut Criterion) {
         let query_geometry = Geometry::Point(query_point);
 
         geom_group.bench_with_input(BenchmarkId::new("euclidean", size), &size, |b, _| {
-            b.iter(|| {
-                tree.neighbors_geometry(&query_geometry, Some(10), None, &euclidean, &geometries)
-            })
+            let adapter = GeometryArrayAdapter::euclidean(&geometries);
+            b.iter(|| tree.neighbors_geometry(&query_geometry, Some(10), None, &adapter))
         });
 
         geom_group.bench_with_input(BenchmarkId::new("haversine", size), &size, |b, _| {
-            b.iter(|| {
-                tree.neighbors_geometry(&query_geometry, Some(10), None, &haversine, &geometries)
-            })
+            let adapter = GeometryArrayAdapter::new(&geometries, Box::new(haversine));
+            b.iter(|| tree.neighbors_geometry(&query_geometry, Some(10), None, &adapter))
         });
 
         geom_group.bench_with_input(BenchmarkId::new("spheroid", size), &size, |b, _| {
-            b.iter(|| {
-                tree.neighbors_geometry(&query_geometry, Some(10), None, &spheroid, &geometries)
-            })
+            let adapter = GeometryArrayAdapter::new(&geometries, Box::new(spheroid));
+            b.iter(|| tree.neighbors_geometry(&query_geometry, Some(10), None, &adapter))
         });
 
         geom_group.finish();
