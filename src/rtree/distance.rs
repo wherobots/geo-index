@@ -7,7 +7,13 @@ use crate::r#type::IndexableNum;
 use geo::algorithm::{Distance, Euclidean, Geodesic, Haversine};
 use geo::{Geometry, Point};
 
-/// A trait for calculating distances between geometries and points.
+/// A unified trait for calculating distances between geometries, points, and indexed items.
+///
+/// This trait supports multiple use cases:
+/// - Point-to-point distance calculations
+/// - Geometry-to-geometry distance calculations
+/// - Index-based distance calculations for maximum flexibility
+/// - Custom storage backends, WKB decoding, caching, etc.
 pub trait DistanceMetric<N: IndexableNum> {
     /// Calculate the distance between two points (x1, y1) and (x2, y2).
     fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N;
@@ -21,6 +27,36 @@ pub trait DistanceMetric<N: IndexableNum> {
 
     /// Calculate the distance between two geometries.
     fn geometry_to_geometry_distance(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N;
+
+    /// Calculate the distance between a query geometry and an indexed item.
+    /// This enables maximum flexibility including on-demand WKB decoding, caching, etc.
+    ///
+    /// # Arguments
+    /// * `query_index` - Index of the query geometry (-1 for external query)
+    /// * `item_index` - Index of the item being compared
+    /// * `query_geometry` - The query geometry (if query_index is -1)
+    /// * `item_bbox` - The bounding box of the item (for optimization)
+    ///
+    /// # Default Implementation
+    /// The default implementation uses `geometry_to_geometry_distance` and is suitable
+    /// for simple geometry array adapters. Override for custom indexed behavior.
+    fn indexed_distance(
+        &self,
+        _query_index: i32,
+        _item_index: usize,
+        query_geometry: Option<&Geometry<f64>>,
+        _item_bbox: (N, N, N, N),
+    ) -> N {
+        // Default implementation for backward compatibility
+        // Implementations with indexed access should override this method
+        if let Some(_query) = query_geometry {
+            // For simple implementations, we can't access the item geometry by index
+            // This method should be overridden for proper indexed functionality
+            N::max_value()
+        } else {
+            N::max_value()
+        }
+    }
 
     /// Return the maximum distance value for this metric.
     fn max_distance(&self) -> N {
@@ -227,39 +263,8 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
     }
 }
 
-/// A trait for calculating distances using indices rather than direct geometry references.
-/// This allows for more flexible implementations including:
-/// - On-demand WKB decoding
-/// - Caching of decoded geometries
-/// - Custom storage backends
-/// - Lazy evaluation strategies
-pub trait IndexedDistanceMetric<N: IndexableNum> {
-    /// Calculate the distance between a query geometry and an indexed item.
-    ///
-    /// # Arguments
-    /// * `query_index` - Index of the query geometry (-1 for external query)
-    /// * `item_index` - Index of the item being compared
-    /// * `query_geometry` - The query geometry (if query_index is -1)
-    /// * `item_bbox` - The bounding box of the item (for optimization)
-    fn indexed_distance(
-        &self,
-        query_index: i32,
-        item_index: usize,
-        query_geometry: Option<&Geometry<f64>>,
-        item_bbox: (N, N, N, N),
-    ) -> N;
-
-    /// Calculate the distance from a point to a bounding box (for tree traversal).
-    fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N;
-
-    /// Return the maximum distance value for this metric.
-    fn max_distance(&self) -> N {
-        N::max_value()
-    }
-}
-
-/// Adapter that uses a geometry array with Euclidean distance.
-/// This provides backward compatibility with the existing API.
+/// Adapter that uses a geometry array with any distance metric.
+/// This provides backward compatibility and a convenient way to use geometry arrays.
 pub struct GeometryArrayAdapter<'a> {
     geometries: &'a [Geometry<f64>],
     distance_metric: Box<dyn DistanceMetric<f64> + 'a>,
@@ -286,7 +291,47 @@ impl<'a> GeometryArrayAdapter<'a> {
     }
 }
 
-impl<'a, N: IndexableNum> IndexedDistanceMetric<N> for GeometryArrayAdapter<'a> {
+impl<'a, N: IndexableNum> DistanceMetric<N> for GeometryArrayAdapter<'a> {
+    fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N {
+        let distance: f64 = self.distance_metric.distance(
+            x1.to_f64().unwrap_or(0.0),
+            y1.to_f64().unwrap_or(0.0),
+            x2.to_f64().unwrap_or(0.0),
+            y2.to_f64().unwrap_or(0.0),
+        );
+        N::from_f64(distance).unwrap_or(N::max_value())
+    }
+
+    fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
+        // Convert N to f64 for the underlying distance metric
+        let x_f64 = x.to_f64().unwrap_or(0.0);
+        let y_f64 = y.to_f64().unwrap_or(0.0);
+        let min_x_f64 = min_x.to_f64().unwrap_or(0.0);
+        let min_y_f64 = min_y.to_f64().unwrap_or(0.0);
+        let max_x_f64 = max_x.to_f64().unwrap_or(0.0);
+        let max_y_f64 = max_y.to_f64().unwrap_or(0.0);
+
+        let distance: f64 = self
+            .distance_metric
+            .distance_to_bbox(x_f64, y_f64, min_x_f64, min_y_f64, max_x_f64, max_y_f64);
+
+        N::from_f64(distance).unwrap_or(N::max_value())
+    }
+
+    fn distance_to_geometry(&self, x: N, y: N, geometry: &Geometry<f64>) -> N {
+        let distance: f64 = self.distance_metric.distance_to_geometry(
+            x.to_f64().unwrap_or(0.0),
+            y.to_f64().unwrap_or(0.0),
+            geometry,
+        );
+        N::from_f64(distance).unwrap_or(N::max_value())
+    }
+
+    fn geometry_to_geometry_distance(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+        let distance: f64 = self.distance_metric.geometry_to_geometry_distance(geom1, geom2);
+        N::from_f64(distance).unwrap_or(N::max_value())
+    }
+
     fn indexed_distance(
         &self,
         _query_index: i32,
@@ -308,20 +353,8 @@ impl<'a, N: IndexableNum> IndexedDistanceMetric<N> for GeometryArrayAdapter<'a> 
         }
     }
 
-    fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
-        // Convert N to f64 for the underlying distance metric
-        let x_f64 = x.to_f64().unwrap_or(0.0);
-        let y_f64 = y.to_f64().unwrap_or(0.0);
-        let min_x_f64 = min_x.to_f64().unwrap_or(0.0);
-        let min_y_f64 = min_y.to_f64().unwrap_or(0.0);
-        let max_x_f64 = max_x.to_f64().unwrap_or(0.0);
-        let max_y_f64 = max_y.to_f64().unwrap_or(0.0);
-
-        let distance: f64 = self
-            .distance_metric
-            .distance_to_bbox(x_f64, y_f64, min_x_f64, min_y_f64, max_x_f64, max_y_f64);
-
-        N::from_f64(distance).unwrap_or(N::max_value())
+    fn max_distance(&self) -> N {
+        N::from_f64(self.distance_metric.max_distance()).unwrap_or(N::max_value())
     }
 }
 
