@@ -428,4 +428,205 @@ mod tests {
         let dist: f64 = adapter.indexed_distance(-1, 1, Some(&query), (3.0, 4.0, 3.0, 4.0));
         assert!((dist - 3.605).abs() < 0.01);
     }
+
+    #[test]
+    fn test_wkb_decoding_distance_metric() {
+        use std::io::Cursor;
+        use wkb::wkb_to_geom;
+
+        /// Custom distance metric that stores WKB-encoded geometries and decodes them on-demand
+        struct WkbIndexedDistance<'a> {
+            wkb_data: &'a [Vec<u8>], // Array of WKB-encoded geometries
+            base_metric: EuclideanDistance,
+        }
+
+        impl<'a> WkbIndexedDistance<'a> {
+            fn new(wkb_data: &'a [Vec<u8>]) -> Self {
+                Self {
+                    wkb_data,
+                    base_metric: EuclideanDistance,
+                }
+            }
+
+            /// Decode WKB data on-demand to get geometry
+            fn decode_geometry(&self, index: usize) -> Option<Geometry<f64>> {
+                if index < self.wkb_data.len() {
+                    let mut cursor = Cursor::new(&self.wkb_data[index]);
+                    wkb_to_geom(&mut cursor).ok()
+                } else {
+                    None
+                }
+            }
+        }
+
+        impl<'a, N: IndexableNum> IndexedDistanceMetric<N> for WkbIndexedDistance<'a> {
+            fn indexed_distance(
+                &self,
+                _query_index: i32,
+                item_index: usize,
+                query_geometry: Option<&Geometry<f64>>,
+                _item_bbox: (N, N, N, N),
+            ) -> N {
+                if let Some(query) = query_geometry {
+                    // On-demand WKB decoding
+                    if let Some(item_geom) = self.decode_geometry(item_index) {
+                        let distance: f64 = self
+                            .base_metric
+                            .geometry_to_geometry_distance(query, &item_geom);
+                        N::from_f64(distance).unwrap_or(N::max_value())
+                    } else {
+                        N::max_value()
+                    }
+                } else {
+                    N::max_value()
+                }
+            }
+
+            fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
+                self.base_metric
+                    .distance_to_bbox(x, y, min_x, min_y, max_x, max_y)
+            }
+        }
+
+        // Create some test WKB data (encoded points)
+        let point1 = Geometry::Point(Point::new(0.0, 0.0));
+        let point2 = Geometry::Point(Point::new(3.0, 4.0));
+        let point3 = Geometry::Point(Point::new(6.0, 8.0));
+
+        let wkb1 = wkb::geom_to_wkb(&point1).unwrap();
+        let wkb2 = wkb::geom_to_wkb(&point2).unwrap();
+        let wkb3 = wkb::geom_to_wkb(&point3).unwrap();
+        let wkb_data = vec![wkb1, wkb2, wkb3];
+
+        // Create the WKB-based distance metric
+        let wkb_metric = WkbIndexedDistance::new(&wkb_data);
+        let query = Geometry::Point(Point::new(1.0, 1.0));
+
+        // Test distance calculation with on-demand WKB decoding
+        let dist: f64 = wkb_metric.indexed_distance(-1, 0, Some(&query), (0.0, 0.0, 0.0, 0.0));
+        assert!((dist - 1.414).abs() < 0.01); // Distance from (1,1) to (0,0)
+
+        let dist: f64 = wkb_metric.indexed_distance(-1, 1, Some(&query), (3.0, 4.0, 3.0, 4.0));
+        assert!((dist - 3.605).abs() < 0.01); // Distance from (1,1) to (3,4)
+
+        let dist: f64 = wkb_metric.indexed_distance(-1, 2, Some(&query), (6.0, 8.0, 6.0, 8.0));
+        assert!((dist - 8.602).abs() < 0.01); // Distance from (1,1) to (6,8)
+    }
+
+    #[test]
+    fn test_cached_geometry_distance_metric() {
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+
+        /// Custom distance metric with geometry caching to avoid repeated calculations
+        struct CachedIndexedDistance<'a> {
+            geometries: &'a [Geometry<f64>],
+            cache: RefCell<HashMap<usize, Geometry<f64>>>, // Cache for decoded geometries
+            base_metric: EuclideanDistance,
+            cache_hits: RefCell<usize>, // Track cache performance
+            cache_misses: RefCell<usize>,
+        }
+
+        impl<'a> CachedIndexedDistance<'a> {
+            fn new(geometries: &'a [Geometry<f64>]) -> Self {
+                Self {
+                    geometries,
+                    cache: RefCell::new(HashMap::new()),
+                    base_metric: EuclideanDistance,
+                    cache_hits: RefCell::new(0),
+                    cache_misses: RefCell::new(0),
+                }
+            }
+
+            /// Get geometry with caching - simulates expensive decode operation
+            fn get_cached_geometry(&self, index: usize) -> Option<Geometry<f64>> {
+                if index >= self.geometries.len() {
+                    return None;
+                }
+
+                // Check cache first
+                if let Some(cached_geom) = self.cache.borrow().get(&index) {
+                    *self.cache_hits.borrow_mut() += 1;
+                    return Some(cached_geom.clone());
+                }
+
+                // Cache miss - "expensive" operation simulation
+                *self.cache_misses.borrow_mut() += 1;
+                let geometry = self.geometries[index].clone();
+
+                // Store in cache
+                self.cache.borrow_mut().insert(index, geometry.clone());
+                Some(geometry)
+            }
+
+            fn get_cache_stats(&self) -> (usize, usize) {
+                (*self.cache_hits.borrow(), *self.cache_misses.borrow())
+            }
+        }
+
+        impl<'a, N: IndexableNum> IndexedDistanceMetric<N> for CachedIndexedDistance<'a> {
+            fn indexed_distance(
+                &self,
+                _query_index: i32,
+                item_index: usize,
+                query_geometry: Option<&Geometry<f64>>,
+                _item_bbox: (N, N, N, N),
+            ) -> N {
+                if let Some(query) = query_geometry {
+                    // Use cached geometry access
+                    if let Some(item_geom) = self.get_cached_geometry(item_index) {
+                        let distance: f64 = self
+                            .base_metric
+                            .geometry_to_geometry_distance(query, &item_geom);
+                        N::from_f64(distance).unwrap_or(N::max_value())
+                    } else {
+                        N::max_value()
+                    }
+                } else {
+                    N::max_value()
+                }
+            }
+
+            fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
+                self.base_metric
+                    .distance_to_bbox(x, y, min_x, min_y, max_x, max_y)
+            }
+        }
+
+        // Create test data
+        let geometries = vec![
+            Geometry::Point(Point::new(0.0, 0.0)),
+            Geometry::Point(Point::new(3.0, 4.0)),
+            Geometry::Point(Point::new(6.0, 8.0)),
+        ];
+
+        let cached_metric = CachedIndexedDistance::new(&geometries);
+        let query = Geometry::Point(Point::new(1.0, 1.0));
+
+        // First access - should be cache misses
+        let dist1: f64 = cached_metric.indexed_distance(-1, 0, Some(&query), (0.0, 0.0, 0.0, 0.0));
+        let dist2: f64 = cached_metric.indexed_distance(-1, 1, Some(&query), (3.0, 4.0, 3.0, 4.0));
+        let dist3: f64 = cached_metric.indexed_distance(-1, 2, Some(&query), (6.0, 8.0, 6.0, 8.0));
+
+        assert!((dist1 - 1.414).abs() < 0.01);
+        assert!((dist2 - 3.605).abs() < 0.01);
+        assert!((dist3 - 8.602).abs() < 0.01);
+
+        let (hits_after_first, misses_after_first) = cached_metric.get_cache_stats();
+        assert_eq!(hits_after_first, 0); // No hits yet
+        assert_eq!(misses_after_first, 3); // 3 misses
+
+        // Second access to same geometries - should be cache hits
+        let dist1_cached: f64 =
+            cached_metric.indexed_distance(-1, 0, Some(&query), (0.0, 0.0, 0.0, 0.0));
+        let dist2_cached: f64 =
+            cached_metric.indexed_distance(-1, 1, Some(&query), (3.0, 4.0, 3.0, 4.0));
+
+        assert!((dist1_cached - 1.414).abs() < 0.01);
+        assert!((dist2_cached - 3.605).abs() < 0.01);
+
+        let (hits_after_second, misses_after_second) = cached_metric.get_cache_stats();
+        assert_eq!(hits_after_second, 2); // 2 cache hits
+        assert_eq!(misses_after_second, 3); // Still 3 misses total
+    }
 }
