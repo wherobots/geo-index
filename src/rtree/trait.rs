@@ -8,7 +8,7 @@ use geo_traits::{CoordTrait, RectTrait};
 use crate::error::Result;
 use crate::indices::Indices;
 use crate::r#type::IndexableNum;
-use crate::rtree::distance::{DistanceMetric, EuclideanDistance};
+use crate::rtree::distance::{DistanceMetric, EuclideanDistance, IndexedDistanceMetric};
 use crate::rtree::index::{RTree, RTreeRef};
 use crate::rtree::traversal::{IntersectionIterator, Node};
 use crate::rtree::util::upper_bound;
@@ -342,7 +342,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
         query_geometry: &geo::Geometry<f64>,
         max_results: Option<usize>,
         max_distance: Option<N>,
-        distance_metric: &dyn DistanceMetric<N>,
+        distance_metric: &dyn IndexedDistanceMetric<N>,
     ) -> Vec<u32> {
         let boxes = self.boxes();
         let indices = self.indices();
