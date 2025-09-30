@@ -3,6 +3,7 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::vec;
 
 use geo::algorithm::BoundingRect;
+use geo::Geometry;
 use geo_traits::{CoordTrait, RectTrait};
 
 use crate::error::Result;
@@ -14,6 +15,21 @@ use crate::rtree::traversal::{IntersectionIterator, Node};
 use crate::rtree::util::upper_bound;
 use crate::rtree::RTreeMetadata;
 use crate::GeoIndexError;
+
+/// A trait for accessing geometries by index.
+///
+/// This trait allows different storage strategies for geometries (direct storage,
+/// WKB decoding, caching, etc.) to be used with spatial index queries.
+pub trait GeometryAccessor {
+    /// Get the geometry at the given index.
+    ///
+    /// # Arguments
+    /// * `item_index` - Index of the item to retrieve
+    ///
+    /// # Returns
+    /// The geometry at the given index, or None if the index is out of bounds
+    fn get_geometry(&self, item_index: usize) -> Option<Geometry<f64>>;
+}
 
 /// A trait for searching and accessing data out of an RTree.
 pub trait RTreeIndex<N: IndexableNum>: Sized {
@@ -192,13 +208,13 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
     /// let haversine = HaversineDistance::default();
     /// let results = tree.neighbors_with_distance(-74.0, 40.7, Some(2), None, &haversine);
     /// ```
-    fn neighbors_with_distance(
+    fn neighbors_with_distance<M: DistanceMetric<N>>(
         &self,
         x: N,
         y: N,
         max_results: Option<usize>,
         max_distance: Option<N>,
-        distance_metric: &dyn DistanceMetric<N>,
+        distance_metric: &M,
     ) -> Vec<u32> {
         let boxes = self.boxes();
         let indices = self.indices();
@@ -281,12 +297,12 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
     }
 
     /// Search items in order of distance from the given coordinate using a custom distance metric.
-    fn neighbors_coord_with_distance(
+    fn neighbors_coord_with_distance<M: DistanceMetric<N>>(
         &self,
         coord: &impl CoordTrait<T = N>,
         max_results: Option<usize>,
         max_distance: Option<N>,
-        distance_metric: &dyn DistanceMetric<N>,
+        distance_metric: &M,
     ) -> Vec<u32> {
         self.neighbors_with_distance(
             coord.x(),
@@ -297,14 +313,15 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
         )
     }
 
-    /// Search items in order of distance from a query geometry using a distance metric.
+    /// Search items in order of distance from a query geometry using a distance metric and geometry accessor.
     ///
     /// This method allows searching with geometry-to-geometry distance calculations.
-    /// The distance metric must implement the `distance_to_item` method to support this query.
+    /// The distance metric defines how distances are computed, and the geometry accessor
+    /// provides access to the actual geometries by index.
     ///
     /// ```
     /// use geo_index::rtree::{RTreeBuilder, RTreeIndex};
-    /// use geo_index::rtree::distance::GeometryArrayAdapter;
+    /// use geo_index::rtree::distance::{EuclideanDistance, SliceGeometryAccessor};
     /// use geo_index::rtree::sort::HilbertSort;
     /// use geo::{Point, Geometry};
     ///
@@ -322,22 +339,18 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
     ///     Geometry::Point(Point::new(11.0, 11.0)),
     /// ];
     ///
-    /// // Create adapter and perform search
-    /// let adapter = GeometryArrayAdapter::euclidean(&geometries);
+    /// let metric = EuclideanDistance;
+    /// let accessor = SliceGeometryAccessor::new(&geometries);
     /// let query_geom = Geometry::Point(Point::new(3.0, 3.0));
-    /// let results = tree.neighbors_geometry(
-    ///     &query_geom,
-    ///     None,
-    ///     None,
-    ///     &adapter
-    /// );
+    /// let results = tree.neighbors_geometry(&query_geom, None, None, &metric, &accessor);
     /// ```
-    fn neighbors_geometry(
+    fn neighbors_geometry<M: DistanceMetric<N>, A: GeometryAccessor>(
         &self,
         query_geometry: &geo::Geometry<f64>,
         max_results: Option<usize>,
         max_distance: Option<N>,
-        distance_metric: &dyn DistanceMetric<N>,
+        distance_metric: &M,
+        accessor: &A,
     ) -> Vec<u32> {
         let boxes = self.boxes();
         let indices = self.indices();
@@ -386,12 +399,12 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
                         boxes[pos + 3],
                     )
                 } else {
-                    // For leaf items, use distance_to_item
-                    distance_metric.distance_to_item(
-                        index,
-                        query_geometry,
-                        (boxes[pos], boxes[pos + 1], boxes[pos + 2], boxes[pos + 3]),
-                    )
+                    // For leaf items, use geometry-to-geometry distance
+                    if let Some(item_geom) = accessor.get_geometry(index) {
+                        distance_metric.distance_to_geometry(query_geometry, &item_geom)
+                    } else {
+                        distance_metric.max_distance()
+                    }
                 };
 
                 if dist > max_distance {
@@ -637,7 +650,9 @@ mod test {
 
         #[test]
         fn test_geometry_neighbors_euclidean() {
-            use crate::rtree::distance::GeometryArrayAdapter;
+            use crate::r#type::IndexableNum;
+            use crate::rtree::distance::{DistanceMetric, SliceGeometryAccessor};
+            use geo::algorithm::{Distance, Euclidean};
             use geo::{Geometry, Point};
 
             let mut builder = RTreeBuilder::<f64>::new(3);
@@ -653,9 +668,47 @@ mod test {
                 Geometry::Point(Point::new(11.0, 11.0)), // Item 2
             ];
 
+            struct SimpleMetric;
+            impl<N: IndexableNum> DistanceMetric<N> for SimpleMetric {
+                fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N {
+                    let dx = x2 - x1;
+                    let dy = y2 - y1;
+                    (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
+                }
+                fn distance_to_bbox(
+                    &self,
+                    x: N,
+                    y: N,
+                    min_x: N,
+                    min_y: N,
+                    max_x: N,
+                    max_y: N,
+                ) -> N {
+                    let dx = if x < min_x {
+                        min_x - x
+                    } else if x > max_x {
+                        x - max_x
+                    } else {
+                        N::zero()
+                    };
+                    let dy = if y < min_y {
+                        min_y - y
+                    } else if y > max_y {
+                        y - max_y
+                    } else {
+                        N::zero()
+                    };
+                    (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
+                }
+                fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+                    N::from_f64(Euclidean.distance(geom1, geom2)).unwrap_or(N::max_value())
+                }
+            }
+
             let query_geom = Geometry::Point(Point::new(3.0, 3.0));
-            let adapter = GeometryArrayAdapter::euclidean(&geometries);
-            let results = tree.neighbors_geometry(&query_geom, None, None, &adapter);
+            let metric = SimpleMetric;
+            let accessor = SliceGeometryAccessor::new(&geometries);
+            let results = tree.neighbors_geometry(&query_geom, None, None, &metric, &accessor);
 
             // Item 0 should be closest to query point (3,3)
             assert_eq!(results[0], 0);
@@ -665,7 +718,9 @@ mod test {
 
         #[test]
         fn test_geometry_neighbors_linestring() {
-            use crate::rtree::distance::GeometryArrayAdapter;
+            use crate::r#type::IndexableNum;
+            use crate::rtree::distance::{DistanceMetric, SliceGeometryAccessor};
+            use geo::algorithm::{Distance, Euclidean};
             use geo::{Geometry, LineString, Point};
             use geo_types::coord;
 
@@ -691,9 +746,47 @@ mod test {
                 ])),
             ];
 
+            struct SimpleMetric;
+            impl<N: IndexableNum> DistanceMetric<N> for SimpleMetric {
+                fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N {
+                    let dx = x2 - x1;
+                    let dy = y2 - y1;
+                    (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
+                }
+                fn distance_to_bbox(
+                    &self,
+                    x: N,
+                    y: N,
+                    min_x: N,
+                    min_y: N,
+                    max_x: N,
+                    max_y: N,
+                ) -> N {
+                    let dx = if x < min_x {
+                        min_x - x
+                    } else if x > max_x {
+                        x - max_x
+                    } else {
+                        N::zero()
+                    };
+                    let dy = if y < min_y {
+                        min_y - y
+                    } else if y > max_y {
+                        y - max_y
+                    } else {
+                        N::zero()
+                    };
+                    (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
+                }
+                fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+                    N::from_f64(Euclidean.distance(geom1, geom2)).unwrap_or(N::max_value())
+                }
+            }
+
             let query_geom = Geometry::Point(Point::new(5.0, 2.0));
-            let adapter = GeometryArrayAdapter::euclidean(&geometries);
-            let results = tree.neighbors_geometry(&query_geom, None, None, &adapter);
+            let metric = SimpleMetric;
+            let accessor = SliceGeometryAccessor::new(&geometries);
+            let results = tree.neighbors_geometry(&query_geom, None, None, &metric, &accessor);
 
             // Item 0 (bottom line) should be closest to point (5, 2)
             assert_eq!(results[0], 0);
@@ -701,7 +794,9 @@ mod test {
 
         #[test]
         fn test_geometry_neighbors_with_max_results() {
-            use crate::rtree::distance::GeometryArrayAdapter;
+            use crate::r#type::IndexableNum;
+            use crate::rtree::distance::{DistanceMetric, SliceGeometryAccessor};
+            use geo::algorithm::{Distance, Euclidean};
             use geo::{Geometry, Point};
 
             let mut builder = RTreeBuilder::<f64>::new(5);
@@ -719,9 +814,47 @@ mod test {
                 })
                 .collect();
 
+            struct SimpleMetric;
+            impl<N: IndexableNum> DistanceMetric<N> for SimpleMetric {
+                fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N {
+                    let dx = x2 - x1;
+                    let dy = y2 - y1;
+                    (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
+                }
+                fn distance_to_bbox(
+                    &self,
+                    x: N,
+                    y: N,
+                    min_x: N,
+                    min_y: N,
+                    max_x: N,
+                    max_y: N,
+                ) -> N {
+                    let dx = if x < min_x {
+                        min_x - x
+                    } else if x > max_x {
+                        x - max_x
+                    } else {
+                        N::zero()
+                    };
+                    let dy = if y < min_y {
+                        min_y - y
+                    } else if y > max_y {
+                        y - max_y
+                    } else {
+                        N::zero()
+                    };
+                    (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
+                }
+                fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+                    N::from_f64(Euclidean.distance(geom1, geom2)).unwrap_or(N::max_value())
+                }
+            }
+
             let query_geom = Geometry::Point(Point::new(5.0, 5.0));
-            let adapter = GeometryArrayAdapter::euclidean(&geometries);
-            let results = tree.neighbors_geometry(&query_geom, Some(3), None, &adapter);
+            let metric = SimpleMetric;
+            let accessor = SliceGeometryAccessor::new(&geometries);
+            let results = tree.neighbors_geometry(&query_geom, Some(3), None, &metric, &accessor);
 
             assert_eq!(results.len(), 3);
             // Should get the 3 closest items
@@ -729,7 +862,9 @@ mod test {
 
         #[test]
         fn test_geometry_neighbors_haversine() {
-            use crate::rtree::distance::GeometryArrayAdapter;
+            use crate::r#type::IndexableNum;
+            use crate::rtree::distance::{DistanceMetric, SliceGeometryAccessor};
+            use geo::algorithm::{Centroid, Distance, Haversine};
             use geo::{Geometry, Point};
 
             let mut builder = RTreeBuilder::<f64>::new(3);
@@ -745,10 +880,45 @@ mod test {
                 Geometry::Point(Point::new(139.7, 35.7)), // Tokyo
             ];
 
+            struct HaversineMetric;
+            impl<N: IndexableNum> DistanceMetric<N> for HaversineMetric {
+                fn distance(&self, lon1: N, lat1: N, lon2: N, lat2: N) -> N {
+                    let p1 = Point::new(lon1.to_f64().unwrap_or(0.0), lat1.to_f64().unwrap_or(0.0));
+                    let p2 = Point::new(lon2.to_f64().unwrap_or(0.0), lat2.to_f64().unwrap_or(0.0));
+                    N::from_f64(Haversine.distance(p1, p2)).unwrap_or(N::max_value())
+                }
+                fn distance_to_bbox(
+                    &self,
+                    lon: N,
+                    lat: N,
+                    min_lon: N,
+                    min_lat: N,
+                    max_lon: N,
+                    max_lat: N,
+                ) -> N {
+                    let lon_f = lon.to_f64().unwrap_or(0.0);
+                    let lat_f = lat.to_f64().unwrap_or(0.0);
+                    let min_lon_f = min_lon.to_f64().unwrap_or(0.0);
+                    let min_lat_f = min_lat.to_f64().unwrap_or(0.0);
+                    let max_lon_f = max_lon.to_f64().unwrap_or(0.0);
+                    let max_lat_f = max_lat.to_f64().unwrap_or(0.0);
+                    let closest_lon = lon_f.clamp(min_lon_f, max_lon_f);
+                    let closest_lat = lat_f.clamp(min_lat_f, max_lat_f);
+                    let point = Point::new(lon_f, lat_f);
+                    let closest_point = Point::new(closest_lon, closest_lat);
+                    N::from_f64(Haversine.distance(point, closest_point)).unwrap_or(N::max_value())
+                }
+                fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+                    let c1 = geom1.centroid().unwrap_or(Point::new(0.0, 0.0));
+                    let c2 = geom2.centroid().unwrap_or(Point::new(0.0, 0.0));
+                    N::from_f64(Haversine.distance(c1, c2)).unwrap_or(N::max_value())
+                }
+            }
+
             let query_geom = Geometry::Point(Point::new(-74.0, 40.7)); // New York
-            let haversine_distance = HaversineDistance::default();
-            let adapter = GeometryArrayAdapter::new(&geometries, haversine_distance);
-            let results = tree.neighbors_geometry(&query_geom, None, None, &adapter);
+            let metric = HaversineMetric;
+            let accessor = SliceGeometryAccessor::new(&geometries);
+            let results = tree.neighbors_geometry(&query_geom, None, None, &metric, &accessor);
 
             // New York should be closest (distance 0)
             assert_eq!(results[0], 0);
