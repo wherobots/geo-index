@@ -208,7 +208,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
     /// let haversine = HaversineDistance::default();
     /// let results = tree.neighbors_with_distance(-74.0, 40.7, Some(2), None, &haversine);
     /// ```
-    fn neighbors_with_distance<M: DistanceMetric<N>>(
+    fn neighbors_with_distance<M: DistanceMetric<N> + ?Sized>(
         &self,
         x: N,
         y: N,
@@ -297,7 +297,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
     }
 
     /// Search items in order of distance from the given coordinate using a custom distance metric.
-    fn neighbors_coord_with_distance<M: DistanceMetric<N>>(
+    fn neighbors_coord_with_distance<M: DistanceMetric<N> + ?Sized>(
         &self,
         coord: &impl CoordTrait<T = N>,
         max_results: Option<usize>,
@@ -344,7 +344,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
     /// let query_geom = Geometry::Point(Point::new(3.0, 3.0));
     /// let results = tree.neighbors_geometry(&query_geom, None, None, &metric, &accessor);
     /// ```
-    fn neighbors_geometry<M: DistanceMetric<N>, A: GeometryAccessor>(
+    fn neighbors_geometry<M: DistanceMetric<N> + ?Sized, A: GeometryAccessor + ?Sized>(
         &self,
         query_geometry: &geo::Geometry<f64>,
         max_results: Option<usize>,
