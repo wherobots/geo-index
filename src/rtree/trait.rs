@@ -8,7 +8,7 @@ use geo_traits::{CoordTrait, RectTrait};
 use crate::error::Result;
 use crate::indices::Indices;
 use crate::r#type::IndexableNum;
-use crate::rtree::distance::{DistanceMetric, EuclideanDistance, IndexedDistanceMetric};
+use crate::rtree::distance::{DistanceMetric, EuclideanDistance};
 use crate::rtree::index::{RTree, RTreeRef};
 use crate::rtree::traversal::{IntersectionIterator, Node};
 use crate::rtree::util::upper_bound;
@@ -297,15 +297,10 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
         )
     }
 
-    /// Search items in order of distance from a query geometry using an indexed distance metric.
+    /// Search items in order of distance from a query geometry using a distance metric.
     ///
-    /// This method provides maximum flexibility by allowing the indexed metric (or adapter)
-    /// to access geometries via indices rather than requiring them to be passed directly.
-    /// This enables:
-    /// - On-demand WKB decoding
-    /// - Geometry caching strategies
-    /// - Custom storage backends
-    /// - Lazy evaluation
+    /// This method allows searching with geometry-to-geometry distance calculations.
+    /// The distance metric must implement the `distance_to_item` method to support this query.
     ///
     /// ```
     /// use geo_index::rtree::{RTreeBuilder, RTreeIndex};
@@ -342,11 +337,11 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
         query_geometry: &geo::Geometry<f64>,
         max_results: Option<usize>,
         max_distance: Option<N>,
-        indexed_metric: &dyn IndexedDistanceMetric<N>,
+        distance_metric: &dyn DistanceMetric<N>,
     ) -> Vec<u32> {
         let boxes = self.boxes();
         let indices = self.indices();
-        let max_distance = max_distance.unwrap_or(indexed_metric.max_distance());
+        let max_distance = max_distance.unwrap_or(distance_metric.max_distance());
 
         // Get the bounding box of the query geometry
         let bounds = query_geometry.bounding_rect();
@@ -382,7 +377,7 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
                     let center_x = (query_min_x + query_max_x) / (N::one() + N::one());
                     let center_y = (query_min_y + query_max_y) / (N::one() + N::one());
 
-                    indexed_metric.distance_to_bbox(
+                    distance_metric.distance_to_bbox(
                         center_x,
                         center_y,
                         boxes[pos],
@@ -391,11 +386,10 @@ pub trait RTreeIndex<N: IndexableNum>: Sized {
                         boxes[pos + 3],
                     )
                 } else {
-                    // For leaf items, use indexed distance calculation
-                    indexed_metric.indexed_distance(
-                        -1, // External query
+                    // For leaf items, use distance_to_item
+                    distance_metric.distance_to_item(
                         index,
-                        Some(query_geometry),
+                        query_geometry,
                         (boxes[pos], boxes[pos + 1], boxes[pos + 2], boxes[pos + 3]),
                     )
                 };
@@ -753,7 +747,7 @@ mod test {
 
             let query_geom = Geometry::Point(Point::new(-74.0, 40.7)); // New York
             let haversine_distance = HaversineDistance::default();
-            let adapter = GeometryArrayAdapter::new(&geometries, Box::new(haversine_distance));
+            let adapter = GeometryArrayAdapter::new(&geometries, haversine_distance);
             let results = tree.neighbors_geometry(&query_geom, None, None, &adapter);
 
             // New York should be closest (distance 0)

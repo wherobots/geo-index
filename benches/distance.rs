@@ -124,12 +124,12 @@ fn benchmark_distance_metrics(c: &mut Criterion) {
         });
 
         geom_group.bench_with_input(BenchmarkId::new("haversine", size), &size, |b, _| {
-            let adapter = GeometryArrayAdapter::new(&geometries, Box::new(haversine));
+            let adapter = GeometryArrayAdapter::new(&geometries, haversine);
             b.iter(|| tree.neighbors_geometry(&query_geometry, Some(10), None, &adapter))
         });
 
         geom_group.bench_with_input(BenchmarkId::new("spheroid", size), &size, |b, _| {
-            let adapter = GeometryArrayAdapter::new(&geometries, Box::new(spheroid));
+            let adapter = GeometryArrayAdapter::new(&geometries, spheroid);
             b.iter(|| tree.neighbors_geometry(&query_geometry, Some(10), None, &adapter))
         });
 
