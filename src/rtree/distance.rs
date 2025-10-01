@@ -7,6 +7,8 @@ use crate::r#type::IndexableNum;
 use geo::algorithm::{Distance, Euclidean, Geodesic, Haversine};
 use geo::{Geometry, Point};
 
+pub use crate::rtree::r#trait::GeometryAccessor;
+
 /// A trait for calculating distances between geometries and points.
 pub trait DistanceMetric<N: IndexableNum> {
     /// Calculate the distance between two points (x1, y1) and (x2, y2).
@@ -16,11 +18,10 @@ pub trait DistanceMetric<N: IndexableNum> {
     /// This is used for spatial index optimization during tree traversal.
     fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N;
 
-    /// Calculate the distance from a point to a geometry.
-    fn distance_to_geometry(&self, x: N, y: N, geometry: &Geometry<f64>) -> N;
-
     /// Calculate the distance between two geometries.
-    fn geometry_to_geometry_distance(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N;
+    /// This method is used by geometry-based neighbor searches to compute the actual
+    /// distance between a query geometry and an item geometry.
+    fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N;
 
     /// Return the maximum distance value for this metric.
     fn max_distance(&self) -> N {
@@ -51,15 +52,7 @@ impl<N: IndexableNum> DistanceMetric<N> for EuclideanDistance {
         (dx * dx + dy * dy).sqrt().unwrap_or(N::max_value())
     }
 
-    #[inline]
-    fn distance_to_geometry(&self, x: N, y: N, geometry: &Geometry<f64>) -> N {
-        let point = Point::new(x.to_f64().unwrap_or(0.0), y.to_f64().unwrap_or(0.0));
-        let point_geom = Geometry::Point(point);
-        N::from_f64(Euclidean.distance(&point_geom, geometry)).unwrap_or(N::max_value())
-    }
-
-    #[inline]
-    fn geometry_to_geometry_distance(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+    fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
         N::from_f64(Euclidean.distance(geom1, geom2)).unwrap_or(N::max_value())
     }
 }
@@ -123,31 +116,12 @@ impl<N: IndexableNum> DistanceMetric<N> for HaversineDistance {
         N::from_f64(Haversine.distance(point, closest_point)).unwrap_or(N::max_value())
     }
 
-    fn distance_to_geometry(&self, lon: N, lat: N, geometry: &Geometry<f64>) -> N {
-        let point = Point::new(lon.to_f64().unwrap_or(0.0), lat.to_f64().unwrap_or(0.0));
-        // For Haversine, use point-to-centroid distance as approximation
-        match geometry {
-            Geometry::Point(p) => {
-                N::from_f64(Haversine.distance(point, *p)).unwrap_or(N::max_value())
-            }
-            _ => {
-                // For non-point geometries, use centroid
-                use geo::algorithm::Centroid;
-                if let Some(centroid) = geometry.centroid() {
-                    N::from_f64(Haversine.distance(point, centroid)).unwrap_or(N::max_value())
-                } else {
-                    N::max_value()
-                }
-            }
-        }
-    }
-
-    fn geometry_to_geometry_distance(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+    fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
         // For Haversine, use centroid-to-centroid distance as approximation
         use geo::algorithm::Centroid;
-        let centroid1 = geom1.centroid().unwrap_or(Point::new(0.0, 0.0));
-        let centroid2 = geom2.centroid().unwrap_or(Point::new(0.0, 0.0));
-        N::from_f64(Haversine.distance(centroid1, centroid2)).unwrap_or(N::max_value())
+        let c1 = geom1.centroid().unwrap_or(Point::new(0.0, 0.0));
+        let c2 = geom2.centroid().unwrap_or(Point::new(0.0, 0.0));
+        N::from_f64(Haversine.distance(c1, c2)).unwrap_or(N::max_value())
     }
 }
 
@@ -199,31 +173,47 @@ impl<N: IndexableNum> DistanceMetric<N> for SpheroidDistance {
         N::from_f64(Geodesic.distance(point, closest_point)).unwrap_or(N::max_value())
     }
 
-    fn distance_to_geometry(&self, lon: N, lat: N, geometry: &Geometry<f64>) -> N {
-        let point = Point::new(lon.to_f64().unwrap_or(0.0), lat.to_f64().unwrap_or(0.0));
-        // For Geodesic, use point-to-centroid distance as approximation
-        match geometry {
-            Geometry::Point(p) => {
-                N::from_f64(Geodesic.distance(point, *p)).unwrap_or(N::max_value())
-            }
-            _ => {
-                // For non-point geometries, use centroid
-                use geo::algorithm::Centroid;
-                if let Some(centroid) = geometry.centroid() {
-                    N::from_f64(Geodesic.distance(point, centroid)).unwrap_or(N::max_value())
-                } else {
-                    N::max_value()
-                }
-            }
-        }
-    }
-
-    fn geometry_to_geometry_distance(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+    fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
         // For Geodesic, use centroid-to-centroid distance as approximation
         use geo::algorithm::Centroid;
-        let centroid1 = geom1.centroid().unwrap_or(Point::new(0.0, 0.0));
-        let centroid2 = geom2.centroid().unwrap_or(Point::new(0.0, 0.0));
-        N::from_f64(Geodesic.distance(centroid1, centroid2)).unwrap_or(N::max_value())
+        let c1 = geom1.centroid().unwrap_or(Point::new(0.0, 0.0));
+        let c2 = geom2.centroid().unwrap_or(Point::new(0.0, 0.0));
+        N::from_f64(Geodesic.distance(c1, c2)).unwrap_or(N::max_value())
+    }
+}
+
+/// Simple geometry accessor that wraps a slice of geometries.
+///
+/// This accessor provides access to geometries by index for use with distance metrics.
+///
+/// # Example
+/// ```
+/// use geo_index::rtree::distance::{EuclideanDistance, SliceGeometryAccessor};
+/// use geo::{Geometry, Point};
+///
+/// let geometries = vec![
+///     Geometry::Point(Point::new(0.0, 0.0)),
+///     Geometry::Point(Point::new(1.0, 1.0)),
+/// ];
+///
+/// let accessor = SliceGeometryAccessor::new(&geometries);
+/// let metric = EuclideanDistance;
+/// // Now accessor and metric can be used with neighbors_geometry
+/// ```
+pub struct SliceGeometryAccessor<'a> {
+    geometries: &'a [Geometry<f64>],
+}
+
+impl<'a> SliceGeometryAccessor<'a> {
+    /// Create a new accessor with the given geometries.
+    pub fn new(geometries: &'a [Geometry<f64>]) -> Self {
+        Self { geometries }
+    }
+}
+
+impl<'a> GeometryAccessor for SliceGeometryAccessor<'a> {
+    fn get_geometry(&self, item_index: usize) -> Option<Geometry<f64>> {
+        self.geometries.get(item_index).cloned()
     }
 }
 
@@ -243,7 +233,6 @@ fn axis_dist<N: IndexableNum>(k: N, min: N, max: N) -> N {
 mod tests {
     use super::*;
     use geo::LineString;
-    use geo_types::coord;
 
     #[test]
     fn test_euclidean_distance() {
@@ -271,40 +260,206 @@ mod tests {
     }
 
     #[test]
-    fn test_distance_to_geometry_point() {
-        let metric = EuclideanDistance;
-        let point_geom = Geometry::Point(Point::new(3.0, 4.0));
-        let distance: f64 = metric.distance_to_geometry(0.0f64, 0.0f64, &point_geom);
-        assert!((distance - 5.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_distance_to_geometry_linestring() {
-        let metric = EuclideanDistance;
-        let line_geom = Geometry::LineString(LineString::new(vec![
-            coord! { x: 0.0, y: 5.0 },
-            coord! { x: 10.0, y: 5.0 },
-        ]));
-        let distance: f64 = metric.distance_to_geometry(0.0f64, 0.0f64, &line_geom);
-        assert!((distance - 5.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_geometry_to_geometry_distance() {
-        let metric = EuclideanDistance;
+    fn test_euclidean_geometry_distance() {
+        // Test Euclidean distance between geometries
         let point1 = Geometry::Point(Point::new(0.0, 0.0));
         let point2 = Geometry::Point(Point::new(3.0, 4.0));
-        let distance: f64 = metric.geometry_to_geometry_distance(&point1, &point2);
+        let distance: f64 = Euclidean.distance(&point1, &point2);
+        assert!((distance - 5.0).abs() < 1e-10);
+
+        // Test distance to line
+        let line = Geometry::LineString(LineString::new(vec![
+            geo_types::coord! { x: 0.0, y: 5.0 },
+            geo_types::coord! { x: 10.0, y: 5.0 },
+        ]));
+        let query = Geometry::Point(Point::new(0.0, 0.0));
+        let distance: f64 = Euclidean.distance(&query, &line);
         assert!((distance - 5.0).abs() < 1e-10);
     }
 
     #[test]
-    fn test_haversine_geometry_distance() {
-        let metric = HaversineDistance::default();
-        let ny_point = Geometry::Point(Point::new(-74.0, 40.7)); // New York
-        let london_point = Geometry::Point(Point::new(-0.1, 51.5)); // London
-        let distance: f64 = metric.geometry_to_geometry_distance(&ny_point, &london_point);
-        // Should be approximately 5585 km
-        assert!((distance - 5585000.0).abs() < 50000.0);
+    fn test_wkb_decoding_distance_metric() {
+        use geozero::{wkb, GeozeroGeometry};
+
+        /// Custom distance metric that stores WKB-encoded geometries and decodes them on-demand
+        struct WkbDistanceMetric<'a> {
+            wkb_data: &'a [Vec<u8>], // Array of WKB-encoded geometries
+        }
+
+        impl<'a> WkbDistanceMetric<'a> {
+            fn new(wkb_data: &'a [Vec<u8>]) -> Self {
+                Self { wkb_data }
+            }
+
+            /// Decode WKB data on-demand to get geometry
+            fn decode_geometry(&self, index: usize) -> Option<Geometry<f64>> {
+                if index < self.wkb_data.len() {
+                    use geozero::geo_types::GeoWriter;
+
+                    let mut geo_writer = GeoWriter::new();
+                    // Pass the byte slice directly to Wkb
+                    if wkb::Wkb(self.wkb_data[index].as_slice())
+                        .process_geom(&mut geo_writer)
+                        .is_ok()
+                    {
+                        geo_writer.take_geometry()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+
+        impl<'a, N: IndexableNum> DistanceMetric<N> for WkbDistanceMetric<'a> {
+            fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N {
+                EuclideanDistance.distance(x1, y1, x2, y2)
+            }
+
+            fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
+                EuclideanDistance.distance_to_bbox(x, y, min_x, min_y, max_x, max_y)
+            }
+
+            fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+                N::from_f64(Euclidean.distance(geom1, geom2)).unwrap_or(N::max_value())
+            }
+        }
+
+        // Create some test WKB data (encoded points)
+        let point1 = Geometry::Point(Point::new(0.0, 0.0));
+        let point2 = Geometry::Point(Point::new(3.0, 4.0));
+        let point3 = Geometry::Point(Point::new(6.0, 8.0));
+
+        // Encode geometries to WKB using geozero
+        use geozero::ToWkb;
+        let wkb1 = point1.to_wkb(geozero::CoordDimensions::default()).unwrap();
+        let wkb2 = point2.to_wkb(geozero::CoordDimensions::default()).unwrap();
+        let wkb3 = point3.to_wkb(geozero::CoordDimensions::default()).unwrap();
+        let wkb_data = vec![wkb1, wkb2, wkb3];
+
+        // Create the WKB-based distance metric
+        let wkb_metric = WkbDistanceMetric::new(&wkb_data);
+        let query = Geometry::Point(Point::new(1.0, 1.0));
+
+        // Test distance calculation with on-demand WKB decoding
+        // Decode geometries and compute distances
+        let geom0 = wkb_metric.decode_geometry(0).unwrap();
+        let dist: f64 = wkb_metric.distance_to_geometry(&query, &geom0);
+        assert!((dist - 1.414).abs() < 0.01); // Distance from (1,1) to (0,0)
+
+        let geom1 = wkb_metric.decode_geometry(1).unwrap();
+        let dist: f64 = wkb_metric.distance_to_geometry(&query, &geom1);
+        assert!((dist - 3.605).abs() < 0.01); // Distance from (1,1) to (3,4)
+
+        let geom2 = wkb_metric.decode_geometry(2).unwrap();
+        let dist: f64 = wkb_metric.distance_to_geometry(&query, &geom2);
+        assert!((dist - 8.602).abs() < 0.01); // Distance from (1,1) to (6,8)
+    }
+
+    #[test]
+    fn test_cached_geometry_distance_metric() {
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+
+        /// Custom distance metric with geometry caching to avoid repeated calculations
+        struct CachedDistanceMetric<'a> {
+            geometries: &'a [Geometry<f64>],
+            cache: RefCell<HashMap<usize, Geometry<f64>>>, // Cache for decoded geometries
+            cache_hits: RefCell<usize>,                    // Track cache performance
+            cache_misses: RefCell<usize>,
+        }
+
+        impl<'a> CachedDistanceMetric<'a> {
+            fn new(geometries: &'a [Geometry<f64>]) -> Self {
+                Self {
+                    geometries,
+                    cache: RefCell::new(HashMap::new()),
+                    cache_hits: RefCell::new(0),
+                    cache_misses: RefCell::new(0),
+                }
+            }
+
+            /// Get geometry with caching - simulates expensive decode operation
+            fn get_cached_geometry(&self, index: usize) -> Option<Geometry<f64>> {
+                if index >= self.geometries.len() {
+                    return None;
+                }
+
+                // Check cache first
+                if let Some(cached_geom) = self.cache.borrow().get(&index) {
+                    *self.cache_hits.borrow_mut() += 1;
+                    return Some(cached_geom.clone());
+                }
+
+                // Cache miss - "expensive" operation simulation
+                *self.cache_misses.borrow_mut() += 1;
+                let geometry = self.geometries[index].clone();
+
+                // Store in cache
+                self.cache.borrow_mut().insert(index, geometry.clone());
+                Some(geometry)
+            }
+
+            fn get_cache_stats(&self) -> (usize, usize) {
+                (*self.cache_hits.borrow(), *self.cache_misses.borrow())
+            }
+        }
+
+        impl<'a, N: IndexableNum> DistanceMetric<N> for CachedDistanceMetric<'a> {
+            fn distance(&self, x1: N, y1: N, x2: N, y2: N) -> N {
+                EuclideanDistance.distance(x1, y1, x2, y2)
+            }
+
+            fn distance_to_bbox(&self, x: N, y: N, min_x: N, min_y: N, max_x: N, max_y: N) -> N {
+                EuclideanDistance.distance_to_bbox(x, y, min_x, min_y, max_x, max_y)
+            }
+
+            fn distance_to_geometry(&self, geom1: &Geometry<f64>, geom2: &Geometry<f64>) -> N {
+                N::from_f64(Euclidean.distance(geom1, geom2)).unwrap_or(N::max_value())
+            }
+        }
+
+        // Create test data
+        let geometries = vec![
+            Geometry::Point(Point::new(0.0, 0.0)),
+            Geometry::Point(Point::new(3.0, 4.0)),
+            Geometry::Point(Point::new(6.0, 8.0)),
+        ];
+
+        let cached_metric = CachedDistanceMetric::new(&geometries);
+        let query = Geometry::Point(Point::new(1.0, 1.0));
+
+        // First access - should be cache misses
+        let geom0 = cached_metric.get_cached_geometry(0).unwrap();
+        let dist1: f64 = cached_metric.distance_to_geometry(&query, &geom0);
+
+        let geom1 = cached_metric.get_cached_geometry(1).unwrap();
+        let dist2: f64 = cached_metric.distance_to_geometry(&query, &geom1);
+
+        let geom2 = cached_metric.get_cached_geometry(2).unwrap();
+        let dist3: f64 = cached_metric.distance_to_geometry(&query, &geom2);
+
+        assert!((dist1 - 1.414).abs() < 0.01);
+        assert!((dist2 - 3.605).abs() < 0.01);
+        assert!((dist3 - 8.602).abs() < 0.01);
+
+        let (hits_after_first, misses_after_first) = cached_metric.get_cache_stats();
+        assert_eq!(hits_after_first, 0); // No hits yet
+        assert_eq!(misses_after_first, 3); // 3 misses
+
+        // Second access to same geometries - should be cache hits
+        let geom0_cached = cached_metric.get_cached_geometry(0).unwrap();
+        let dist1_cached: f64 = cached_metric.distance_to_geometry(&query, &geom0_cached);
+
+        let geom1_cached = cached_metric.get_cached_geometry(1).unwrap();
+        let dist2_cached: f64 = cached_metric.distance_to_geometry(&query, &geom1_cached);
+
+        assert!((dist1_cached - 1.414).abs() < 0.01);
+        assert!((dist2_cached - 3.605).abs() < 0.01);
+
+        let (hits_after_second, misses_after_second) = cached_metric.get_cache_stats();
+        assert_eq!(hits_after_second, 2); // 2 cache hits
+        assert_eq!(misses_after_second, 3); // Still 3 misses total
     }
 }
