@@ -6,7 +6,7 @@
 
 use geo::algorithm::BoundingRect;
 use geo::{Geometry, LineString, Point, Polygon};
-use geo_index::rtree::distance::EuclideanDistance;
+use geo_index::rtree::distance::{EuclideanDistance, SliceGeometryAccessor};
 use geo_index::rtree::sort::HilbertSort;
 use geo_index::rtree::{RTreeBuilder, RTreeIndex};
 use geo_types::coord;
@@ -50,8 +50,9 @@ fn point_geometries_example() {
 
     // Query with a point geometry
     let query_geom = Geometry::Point(Point::new(3.0, 3.0));
-    let euclidean = EuclideanDistance;
-    let results = tree.neighbors_geometry(&query_geom, Some(3), None, &euclidean, &geometries);
+    let metric = EuclideanDistance;
+    let accessor = SliceGeometryAccessor::new(&geometries);
+    let results = tree.neighbors_geometry(&query_geom, Some(3), None, &metric, &accessor);
 
     println!("  Query point: (3.0, 3.0)");
     println!("  Nearest 3 points (indices): {:?}", results);
@@ -102,8 +103,9 @@ fn mixed_geometries_example() {
 
     // Query with a point near the line
     let query_geom = Geometry::Point(Point::new(4.0, 3.0));
-    let euclidean = EuclideanDistance;
-    let results = tree.neighbors_geometry(&query_geom, None, None, &euclidean, &geometries);
+    let metric = EuclideanDistance;
+    let accessor = SliceGeometryAccessor::new(&geometries);
+    let results = tree.neighbors_geometry(&query_geom, None, None, &metric, &accessor);
 
     println!("  Query point: (4.0, 3.0)");
     println!("  Nearest geometries (indices): {:?}", results);
@@ -147,8 +149,9 @@ fn linestring_geometries_example() {
 
     // Query with a point
     let query_geom = Geometry::Point(Point::new(3.0, 1.0));
-    let euclidean = EuclideanDistance;
-    let results = tree.neighbors_geometry(&query_geom, None, None, &euclidean, &geometries);
+    let metric = EuclideanDistance;
+    let accessor = SliceGeometryAccessor::new(&geometries);
+    let results = tree.neighbors_geometry(&query_geom, None, None, &metric, &accessor);
 
     println!("  Query point: (3.0, 1.0)");
     println!("  Nearest lines (indices): {:?}", results);
